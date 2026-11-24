@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="PulseAI ECG heartbeat classification dashboard">
+    <title>PulseAI | ECG Heartbeat Classifier</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        clinical: "#0D9488",
+                        mint: "#E8F7F5",
+                        coral: "#E11D48",
+                        amber: "#F59E0B",
+                        violet: "#8B5CF6",
+                        canvas: "#F2F6F7"
+                    },
+                    fontFamily: {
+                        jakarta: ["Plus Jakarta Sans", "sans-serif"]
+                    }
+                }
+            }
+        };
+    </script>
+
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            background: #F2F6F7;
+            color: #172B3A;
+            font-family: "Plus Jakarta Sans", sans-serif;
+        }
+        .bento-card {
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid #E2E8F0;
+            border-radius: 22px;
+            background: #FFFFFF;
+            box-shadow: 0 10px 30px rgba(15, 60, 70, .06);
+        }
+        .nav-tab {
+            border-radius: 12px;
+            padding: 10px 14px;
+            color: #64748B;
+            font-size: 13px;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+        .nav-tab.active {
+            background: #E8F7F5;
+            color: #0F766E;
+        }
+        .upload-zone {
+            border: 1.5px dashed #8BC9C1;
+            background: #F7FCFB;
+        }
+        .chart-frame {
+            position: relative;
+            width: 100%;
+            height: 270px;
+            min-width: 0;
+            overflow: hidden;
+        }
+        .donut-frame {
+            position: relative;
+            width: 190px;
+            height: 190px;
+            flex: 0 0 190px;
+        }
+        .prob-track {
+            height: 9px;
+            overflow: hidden;
+            border-radius: 999px;
+            background: #EDF2F4;
+        }
+        .prob-fill {
+            height: 100%;
+            min-width: 0;
+            border-radius: 999px;
+            transition: width .25s ease;
+        }
+        .view-panel { display: none; }
+        .view-panel.active { display: block; }
+        @media (max-width: 1023px) {
+            .dashboard-grid { grid-template-columns: minmax(0, 1fr) !important; }
+        }
+        @media (max-width: 640px) {
+            .chart-frame { height: 220px; }
+            .donut-frame { width: 155px; height: 155px; flex-basis: 155px; }
+            .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+    </style>
+</head>
+
+<body class="min-h-screen">
+    {% set has_result = result is not none %}
+    {% set class_colors = ['#0D9488', '#F59E0B', '#E11D48', '#FB923C', '#8B5CF6'] %}
+    {% set counts = result.class_counts if has_result else [0, 0, 0, 0, 0] %}
+    {% set total = result.sample_count if has_result else 0 %}
+    {% set selected = result.selected_sample if has_result else none %}
+    {% set probs = selected.probabilities if selected else [0, 0, 0, 0, 0] %}
+    {% set current_prediction = selected.prediction_label if selected else 'Ready for upload' %}
+    {% set current_confidence = selected.confidence if selected else 0 %}
+    {% set current_waveform = selected.waveform if selected else [] %}
+
+    <main class="mx-auto max-w-[1480px] px-4 py-5 sm:px-6 lg:px-8 lg:py-8">
+        <header class="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-[22px] border border-white bg-white/90 px-4 py-3 shadow-sm sm:px-6">
+            <a href="/" class="flex items-center gap-3 no-underline">
+                <span class="flex items-center justify-center shadow-md" style="background-color: #0D9488; width: 40px; height: 40px; border-radius: 12px;">
+                    <svg viewBox="0 0 40 40" width="27" height="27" fill="none" aria-hidden="true">
+                        <path d="M3 21h8l4-10 7 19 5-13 3 4h7" stroke="#FFFFFF" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                </span>
+                <span class="text-[22px] font-extrabold tracking-tight text-slate-900">Pulse<span class="text-[#0D9488]">AI</span></span>
+            </a>
+
+            <nav class="order-3 flex w-full gap-1 overflow-x-auto rounded-2xl bg-slate-50 p-1 sm:order-2 sm:w-auto" aria-label="Dashboard views">
+                <button class="nav-tab active" type="button" data-view="overview">Overview</button>
+                <button class="nav-tab" type="button" data-view="batch">Batch Report</button>
+                <button class="nav-tab" type="button" data-view="model">Model Info</button>
+            </nav>
+
+            <div class="order-2 flex items-center gap-2 rounded-full bg-teal-700 px-3 py-2 text-xs font-bold text-white sm:order-3">
+                <span class="h-2 w-2 rounded-full bg-emerald-300"></span>
+                <span>{% if has_result %}Analysis complete{% else %}Ready for upload{% endif %}</span>
+            </div>
+        </header>
+
+        {% if error %}
+        <div role="alert" class="mb-5 rounded-2xl border border-rose-200 bg-rose-50 px-5 py-4 text-sm font-semibold text-rose-700">
+            {{ error }}
+        </div>
+        {% endif %}
+
+        <section id="overview" class="view-panel active">
+            <div class="dashboard-grid grid grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(280px,0.9fr)_minmax(0,2fr)]">
+                <div class="flex min-w-0 flex-col gap-5">
+                    <article class="bento-card border-[#A9DCD4] bg-gradient-to-br from-[#E8F7F5] to-white p-5 sm:p-6">
+                        <div class="mb-5 flex items-center justify-between gap-3">
+                            <div>
+                                <p class="text-xs font-bold uppercase tracking-[.14em] text-teal-700">PulseAI insight</p>
+                                <h1 class="mt-1 text-lg font-bold text-slate-900">Primary Classification</h1>
+                            </div>
+                            <span class="rounded-xl bg-white p-2 text-teal-700 shadow-sm">
+                                <svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 12h4l2-5 4 10 2-5h6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                            </span>
+                        </div>
+
+                        <div class="flex flex-wrap items-end gap-2">
+                            <span id="confidenceValue" class="text-4xl font-extrabold text-slate-900">{% if has_result %}{{ "%.1f"|format(current_confidence|float) }}%{% else %}--%{% endif %}</span>
+                            <span class="pb-1 text-sm font-semibold text-slate-600">Confidence</span>
+                        </div>
+                        <div id="predictionBadge" class="mt-3 inline-flex rounded-full bg-teal-700 px-4 py-2 text-xs font-bold text-white">
+                            {{ current_prediction }}
+                        </div>
+
+                        <div class="mt-5 flex items-center gap-4 rounded-2xl border border-white bg-white/70 p-4">
+                            <div class="flex h-[76px] w-[76px] flex-shrink-0 items-center justify-center rounded-2xl bg-rose-50">
+                                <svg viewBox="0 0 100 100" class="h-[68px] w-[68px]" fill="none" aria-label="Heart with ECG pulse">
+                                    <path d="M50 83S12 61 12 34c0-14 10-23 23-23 8 0 13 5 15 11 3-6 9-11 17-11 13 0 23 9 23 23 0 27-40 49-40 49Z" fill="#FB7185" stroke="#E11D48" stroke-width="3"/>
+                                    <path d="M19 47h17l7-13 10 30 8-20 5 8h16" stroke="white" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
+                            <p id="diagnosisText" class="text-xs font-medium leading-6 text-slate-600">
+                                {% if has_result %}Classification for the selected ECG sample using 187 signal points.{% else %}Upload an ECG CSV file to view its predicted heartbeat class and confidence.{% endif %}
+                            </p>
+                        </div>
+                    </article>
+
+                    <article class="bento-card p-5 sm:p-6">
+                        <div class="mb-4 flex items-center justify-between">
+                            <h2 class="text-base font-bold text-slate-900">Upload Batch Data</h2>
+                            <span class="rounded-lg bg-teal-50 px-2 py-1 text-[10px] font-bold uppercase text-teal-700">CSV input</span>
+                        </div>
+
+                        <form action="/" method="POST" enctype="multipart/form-data" id="uploadForm">
+                            <label for="ecg_file" id="dropZone" class="upload-zone flex min-h-[175px] cursor-pointer flex-col items-center justify-center rounded-2xl px-4 py-6 text-center">
+                                <svg class="mb-3 h-10 w-10 text-teal-800/70" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true">
+                                    <path d="M13 5h15l10 10v27H13a4 4 0 0 1-4-4V9a4 4 0 0 1 4-4Z" stroke-linejoin="round"/>
+                                    <path d="M28 5v11h10M17 25h17M17 31h17M17 37h11" stroke-linecap="round"/>
+                                </svg>
+                                <span class="text-sm font-semibold text-slate-800">Drag &amp; drop ECG CSV file</span>
+                                <span class="mt-1 text-xs text-slate-500">187 signal columns, or 188 columns with a label</span>
+                                <span id="fileName" class="mt-3 max-w-full truncate rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-teal-800 shadow-sm">
+                                    {% if has_result %}Active file: {{ result.filename }}{% else %}No file selected{% endif %}
+                                </span>
+                                <input type="file" id="ecg_file" name="ecg_file" accept=".csv,text/csv" class="sr-only" required>
+                            </label>
+                            <button type="submit" id="submitButton" class="mt-4 w-full rounded-xl bg-[#0D9488] px-5 py-3 text-sm font-bold text-white shadow-md transition hover:bg-teal-800 disabled:cursor-wait disabled:opacity-60">
+                                Analyze ECG
+                            </button>
+                        </form>
+                        <p class="mt-3 text-xs leading-5 text-slate-500">Large CSV files are processed in chunks. Maximum upload size: 500 MB.</p>
+                    </article>
+                </div>
+
+                <div class="flex min-w-0 flex-col gap-5">
+                    <div class="kpi-grid grid grid-cols-2 gap-3 xl:grid-cols-4">
+                        <article class="bento-card p-4">
+                            <p class="text-xs font-semibold text-slate-500">Total Samples</p>
+                            <p id="totalSamples" class="mt-2 text-2xl font-extrabold text-slate-900">{{ "{:,}".format(total) }}</p>
+                            <span class="mt-2 inline-block rounded-lg bg-teal-50 px-2 py-1 text-[10px] font-bold text-teal-700">{% if has_result %}Processed{% else %}Ready{% endif %}</span>
+                        </article>
+                        <article class="bento-card p-4">
+                            <p class="text-xs font-semibold text-slate-500">Normal Beats</p>
+                            <p id="normalPercentage" class="mt-2 text-2xl font-extrabold text-slate-900">{{ "%.1f"|format(result.normal_percentage|float) if has_result else "0.0" }}%</p>
+                            <div class="mt-3 h-2 overflow-hidden rounded-full bg-slate-100"><div id="normalProgress" class="h-full rounded-full bg-[#0D9488]" style="width: {{ result.normal_percentage if has_result else 0 }}%"></div></div>
+                        </article>
+                        <article class="bento-card p-4">
+                            <p class="text-xs font-semibold text-slate-500">Arrhythmias Flagged</p>
+                            <p id="arrhythmiaCount" class="mt-2 text-2xl font-extrabold text-slate-900">{{ "{:,}".format(result.arrhythmia_count) if has_result else "0" }}</p>
+                            <span class="mt-2 inline-block rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700">Non-normal classes</span>
+                        </article>
+                        <article class="bento-card p-4">
+                            <p class="text-xs font-semibold text-slate-500">Signal Resolution</p>
+                            <p class="mt-2 text-2xl font-extrabold text-slate-900">187 <span class="text-xs font-semibold text-slate-500">pts/beat</span></p>
+                            <span class="mt-2 inline-block rounded-lg bg-teal-50 px-2 py-1 text-[10px] font-bold text-teal-700">Input features</span>
+                        </article>
+                    </div>
+
+                    <article id="waveform" class="bento-card min-w-0 p-5 sm:p-6">
+                        <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+                            <div>
+                                <h2 class="text-base font-bold text-slate-900">Live ECG Waveform Inspector</h2>
+                                <p id="waveformSubtitle" class="mt-1 text-xs text-slate-500">{% if has_result %}Sample #1 · {{ current_prediction }}{% else %}Upload a CSV to inspect a real ECG waveform{% endif %}</p>
+                            </div>
+                            <label class="flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                Select sample
+                                <select id="sampleSelector" class="max-w-[150px] rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs outline-none focus:border-teal-600" {% if not has_result %}disabled{% endif %}>
+                                    {% if has_result %}
+                                        {% for sample in result.samples %}
+                                        <option value="{{ loop.index0 }}">Sample #{{ sample.index }}</option>
+                                        {% endfor %}
+                                    {% else %}
+                                        <option value="">No samples</option>
+                                    {% endif %}
+                                </select>
+                            </label>
+                        </div>
+                        <div class="chart-frame">
+                            <canvas id="waveformChart" aria-label="ECG waveform chart"></canvas>
+                            {% if not has_result %}
+                            <div id="waveformEmpty" class="absolute inset-0 flex items-center justify-center text-sm text-slate-400">Waveform will appear after upload</div>
+                            {% endif %}
+                        </div>
+                    </article>
+
+                    <div class="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-2">
+                        <article class="bento-card p-5">
+                            <h2 class="text-base font-bold text-slate-900">5-Class Probability Distribution</h2>
+                            <div id="probabilityBars" class="mt-5 space-y-4">
+                                {% for short_name in class_short %}
+                                <div class="grid grid-cols-[18px_minmax(0,1fr)_54px] items-center gap-3">
+                                    <span class="text-xs font-bold text-slate-600">{{ short_name }}</span>
+                                    <div class="prob-track" style="background-color: #E2E8F0; height: 8px; border-radius: 999px; overflow: hidden;">
+                                        <div class="prob-fill" style="width: {{ probs[loop.index0] if probs else 0 }}%; background-color: {{ class_colors[loop.index0] }}; height: 100%;"></div>
+                                    </div>
+                                    <span class="text-right text-xs font-semibold text-slate-600">{{ "%.2f"|format(probs[loop.index0]|float) if probs else "0.00" }}%</span>
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </article>
+
+                        <article id="batch-report" class="bento-card p-5">
+                            <h2 class="text-base font-bold text-slate-900">Dataset Classification Overview</h2>
+                            <div class="mt-4 flex flex-wrap items-center justify-center gap-5">
+                                {% if has_result %}
+                                <div class="donut-frame"><canvas id="classDonut" aria-label="Batch class distribution donut chart"></canvas></div>
+                                {% else %}
+                                <div class="donut-frame flex items-center justify-center">
+                                    <div class="flex h-[160px] w-[160px] items-center justify-center rounded-full text-center text-xs font-semibold text-slate-400" style="border: 14px solid #E2E8F0;">
+                                        Awaiting CSV
+                                    </div>
+                                </div>
+                                {% endif %}
+                                <div id="classLegend" class="min-w-[115px] flex-1 space-y-3">
+                                    {% for short_name in class_short %}
+                                    <div class="flex items-center justify-between gap-3 text-xs">
+                                        <span class="flex items-center gap-2 font-semibold text-slate-600"><span class="h-2.5 w-2.5 rounded-full" style="background: {{ class_colors[loop.index0] }}"></span>{{ short_name }}</span>
+                                        <span class="font-bold text-slate-800">{{ "{:,}".format(counts[loop.index0]) }}</span>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </article>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="batch" class="view-panel">
+            <article class="bento-card p-6">
+                <h2 class="text-lg font-bold text-slate-900">Batch Report</h2>
+                {% if has_result %}
+                <p class="mt-2 text-sm text-slate-600">Processed {{ "{:,}".format(total) }} rows from <strong>{{ result.filename }}</strong>.</p>
+                <div class="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-5">
+                    {% for short_name in class_short %}
+                    <div class="rounded-2xl bg-slate-50 p-4">
+                        <p class="text-xs font-bold text-slate-500">{{ short_name }}</p>
+                        <p class="mt-2 text-xl font-extrabold text-slate-900">{{ "{:,}".format(counts[loop.index0]) }}</p>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="mt-2 text-sm text-slate-500">Upload a CSV file to generate a batch classification report.</p>
+                {% endif %}
+            </article>
+        </section>
+
+        <section id="model" class="view-panel">
+            <article class="bento-card p-6">
+                <h2 class="text-lg font-bold text-slate-900">Model Information</h2>
+                <p class="mt-3 text-sm leading-7 text-slate-600">PulseAI uses the trained Artificial Neural Network model stored in the project models directory. Each ECG sample contains 187 numerical signal features. The model returns probabilities for five heartbeat classes: N, S, V, F and Q.</p>
+                <div class="mt-4 rounded-xl bg-amber-50 p-4 text-sm leading-6 text-amber-900">This application is an educational machine-learning demonstration. Its predictions are not medical advice and must not be used for clinical diagnosis or treatment decisions.</div>
+            </article>
+        </section>
+
+        <footer class="mt-7 pb-4 text-center text-xs font-medium leading-6 text-slate-500">
+            Educational demonstration only. Not intended for clinical diagnosis.
+            <span class="mx-1 text-slate-300">•</span>
+            Developed by <strong class="text-slate-700">Waqas Shakir</strong>
+        </footer>
+    </main>
+
+    <script>
+        const samples = {{ result.samples | tojson if has_result else '[]' }};
+        const classCounts = {{ counts | tojson }};
+        const classColors = ["#0D9488", "#F59E0B", "#E11D48", "#FB923C", "#8B5CF6"];
+        const classShort = ["N", "S", "V", "F", "Q"];
+
+        // Switch dashboard sections using the navigation buttons.
+        document.querySelectorAll("[data-view]").forEach((button) => {
+            button.addEventListener("click", () => {
+                document.querySelectorAll("[data-view]").forEach((item) => item.classList.remove("active"));
+                document.querySelectorAll(".view-panel").forEach((panel) => panel.classList.remove("active"));
+                button.classList.add("active");
+                document.getElementById(button.dataset.view).classList.add("active");
+            });
+        });
+
+        // Display the selected file name before submitting the form.
+        const fileInput = document.getElementById("ecg_file");
+        const fileName = document.getElementById("fileName");
+        const dropZone = document.getElementById("dropZone");
+
+        fileInput.addEventListener("change", () => {
+            fileName.textContent = fileInput.files.length
+                ? `Selected file: ${fileInput.files[0].name}`
+                : "No file selected";
+        });
+
+        ["dragenter", "dragover"].forEach((eventName) => {
+            dropZone.addEventListener(eventName, (event) => {
+                event.preventDefault();
+                dropZone.classList.add("border-teal-600", "bg-teal-50");
+            });
+        });
+        ["dragleave", "drop"].forEach((eventName) => {
+            dropZone.addEventListener(eventName, (event) => {
+                event.preventDefault();
+                dropZone.classList.remove("border-teal-600", "bg-teal-50");
+            });
+        });
+        dropZone.addEventListener("drop", (event) => {
+            if (event.dataTransfer.files.length) {
+                fileInput.files = event.dataTransfer.files;
+                fileInput.dispatchEvent(new Event("change"));
+            }
+        });
+
+        document.getElementById("uploadForm").addEventListener("submit", () => {
+            const submitButton = document.getElementById("submitButton");
+            submitButton.disabled = true;
+            submitButton.textContent = "Analyzing ECG...";
+        });
+
+        // Create the waveform chart with real sample data from Flask.
+        const waveformCanvas = document.getElementById("waveformChart");
+        const waveformContext = waveformCanvas.getContext("2d");
+        const gradient = waveformContext.createLinearGradient(0, 0, 0, 270);
+        gradient.addColorStop(0, "rgba(13, 148, 136, 0.28)");
+        gradient.addColorStop(1, "rgba(13, 148, 136, 0.01)");
+
+        const waveformChart = new Chart(waveformCanvas, {
+            type: "line",
+            data: {
+                labels: samples.length ? samples[0].waveform.map((_, index) => index + 1) : [],
+                datasets: [{
+                    label: "ECG amplitude",
+                    data: samples.length ? samples[0].waveform : [],
+                    borderColor: "#0D9488",
+                    backgroundColor: gradient,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    pointHoverRadius: 4,
+                    fill: true,
+                    tension: 0.18
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: { intersect: false, mode: "index" },
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        backgroundColor: "#16313A",
+                        titleColor: "#FFFFFF",
+                        bodyColor: "#D9F4EF",
+                        padding: 10
+                    }
+                },
+                scales: {
+                    x: {
+                        title: { display: true, text: "Signal point", color: "#64748B" },
+                        grid: { color: "rgba(148,163,184,.14)" },
+                        ticks: { maxTicksLimit: 10, color: "#64748B" }
+                    },
+                    y: {
+                        grid: { color: "rgba(148,163,184,.14)" },
+                        ticks: { color: "#64748B", maxTicksLimit: 5 }
+                    }
+                }
+            }
+        });
+
+        // Render a real five-class distribution from the batch prediction counts.
+        const donutCanvas = document.getElementById("classDonut");
+        if (donutCanvas && classCounts.reduce((sum, value) => sum + Number(value || 0), 0) > 0) {
+            new Chart(donutCanvas, {
+                type: "doughnut",
+                data: {
+                    labels: ["N", "S", "V", "F", "Q"],
+                    datasets: [{
+                        data: classCounts,
+                        backgroundColor: classColors,
+                        borderColor: "#FFFFFF",
+                        borderWidth: 3,
+                        hoverOffset: 5
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: "68%",
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            backgroundColor: "#16313A",
+                            callbacks: {
+                                label: (context) => `${context.label}: ${context.raw.toLocaleString()}`
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
+        // Update the selected sample's diagnosis, confidence, probabilities and waveform.
+        function selectSample(index) {
+            const sample = samples[index];
+            if (!sample) return;
+
+            document.getElementById("confidenceValue").textContent = `${sample.confidence.toFixed(1)}%`;
+            document.getElementById("predictionBadge").textContent = sample.prediction_label;
+            document.getElementById("diagnosisText").textContent =
+                `Classification for sample #${sample.index} using 187 ECG signal points.`;
+            document.getElementById("waveformSubtitle").textContent =
+                `Sample #${sample.index} · ${sample.prediction_label}`;
+
+            waveformChart.data.labels = sample.waveform.map((_, point) => point + 1);
+            waveformChart.data.datasets[0].data = sample.waveform;
+            waveformChart.update();
+
+            document.querySelectorAll("#probabilityBars > div").forEach((row, classIndex) => {
+                const value = Number(sample.probabilities[classIndex] || 0);
+                row.querySelector(".prob-fill").style.width = `${Math.max(0, Math.min(100, value))}%`;
+                row.lastElementChild.textContent = `${value.toFixed(2)}%`;
+            });
+        }
+
+        document.getElementById("sampleSelector").addEventListener("change", (event) => {
+            selectSample(Number(event.target.value));
+        });
+    </script>
+</body>
+</html>
