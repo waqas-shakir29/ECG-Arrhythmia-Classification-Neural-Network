@@ -1,6 +1,6 @@
 # ECG Heartbeat Classification with ANN
 
-CSE 532 Machine Learning project: classify pre-segmented ECG heartbeat samples into five categories using feedforward Artificial Neural Networks.
+ classify pre-segmented ECG heartbeat samples into five categories using feedforward Artificial Neural Networks.
 
 > Educational project only. This model is not a medical diagnostic tool.
 
